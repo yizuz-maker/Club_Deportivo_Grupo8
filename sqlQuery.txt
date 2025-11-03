@@ -234,9 +234,9 @@ BEGIN
         WHERE s.Estado <> 'Activo' OR inst.Estado <> 'Disponible'
     )
     BEGIN
+	ROLLBACK TRANSACTION;
         INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
         VALUES ('Error', 'Intento de reserva con socio inactivo o instalación no disponible.');
-        ROLLBACK TRANSACTION;
     END
 END;
 GO
