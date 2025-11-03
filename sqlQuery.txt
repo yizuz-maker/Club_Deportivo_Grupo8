@@ -1,0 +1,619 @@
+USE master;
+GO
+ALTER DATABASE Club_DeportivoAtlHor SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+GO
+
+DROP DATABASE IF EXISTS Club_DeportivoAtlHor;
+GO
+--Crear Base de Datos
+
+CREATE DATABASE Club_DeportivoAtlHor;
+GO
+
+USE Club_DeportivoAtlHor;
+GO
+
+-- ==================================================================================
+-- SCRIPT DE CREACIÓN DE TABLAS - CLUB DEPORTIVO (Reejecutable)
+-- ==================================================================================
+
+-- Eliminación en orden inverso para evitar conflictos de FK
+IF OBJECT_ID('PAGO','U') IS NOT NULL DROP TABLE PAGO;
+IF OBJECT_ID('RESERVA_SERVICIO','U') IS NOT NULL DROP TABLE RESERVA_SERVICIO;
+IF OBJECT_ID('SERVICIO','U') IS NOT NULL DROP TABLE SERVICIO;
+IF OBJECT_ID('DetalleReserva','U') IS NOT NULL DROP TABLE DetalleReserva;
+IF OBJECT_ID('RESERVA','U') IS NOT NULL DROP TABLE RESERVA;
+IF OBJECT_ID('SOCIO','U') IS NOT NULL DROP TABLE SOCIO;
+IF OBJECT_ID('TARIFA','U') IS NOT NULL DROP TABLE TARIFA;
+IF OBJECT_ID('INSTALACION','U') IS NOT NULL DROP TABLE INSTALACION;
+IF OBJECT_ID('DISCIPLINA','U') IS NOT NULL DROP TABLE DISCIPLINA;
+IF OBJECT_ID('LOG_ALERTAS','U') IS NOT NULL DROP TABLE LOG_ALERTAS;
+GO
+
+-- ==================================================================================
+-- TABLAS BASE
+-- ==================================================================================
+
+CREATE TABLE DISCIPLINA (
+    idDisciplina INT IDENTITY(1,1) PRIMARY KEY,
+    Nombre VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE INSTALACION (
+    idInstalacion INT IDENTITY(1,1) PRIMARY KEY,
+    Codigo VARCHAR(20) NOT NULL UNIQUE,
+    Ubicacion VARCHAR(100) NOT NULL,
+    Tipo VARCHAR(50) NOT NULL,
+    Estado VARCHAR(20) NOT NULL CHECK (Estado IN ('Disponible','Fuera de Servicio','Inactiva')),
+    idDisciplina INT NOT NULL,
+    FOREIGN KEY (idDisciplina) REFERENCES DISCIPLINA(idDisciplina)
+);
+
+CREATE TABLE TARIFA (
+    idTarifa INT IDENTITY(1,1) PRIMARY KEY,
+    FechaInicio DATE NOT NULL,
+    FechaFin DATE NOT NULL,
+    PrecioHora DECIMAL(10,2) NOT NULL CHECK (PrecioHora > 0),
+    Descripcion VARCHAR(100),
+    idInstalacion INT NOT NULL,
+    FOREIGN KEY (idInstalacion) REFERENCES INSTALACION(idInstalacion)
+);
+
+CREATE TABLE SOCIO (
+    idSocio INT IDENTITY(1,1) PRIMARY KEY,
+    Nombre VARCHAR(50) NOT NULL,
+    Apellido VARCHAR(50) NOT NULL,
+    Telefono VARCHAR(20),
+    Email VARCHAR(100),
+    Documento VARCHAR(20) NOT NULL UNIQUE,
+    Estado VARCHAR(20) NOT NULL CHECK (Estado IN ('Activo','Inactivo','Suspendido')),
+    FechaAlta DATE NOT NULL DEFAULT GETDATE()
+);
+
+CREATE TABLE RESERVA (
+    idReserva INT IDENTITY(1,1) PRIMARY KEY,
+    FechaCreacion DATETIME NOT NULL DEFAULT GETDATE(),
+    Estado VARCHAR(20) NOT NULL CHECK (Estado IN ('Pendiente','Confirmada','Anulada')),
+    Total DECIMAL(10,2) NOT NULL CHECK (Total >= 0),
+    idSocio INT NOT NULL,
+    FOREIGN KEY (idSocio) REFERENCES SOCIO(idSocio)
+);
+
+CREATE TABLE DetalleReserva (
+    idDetalleReserva INT IDENTITY(1,1) PRIMARY KEY,
+    FechaUso DATE NOT NULL,
+    Horas INT NOT NULL CHECK (Horas > 0),
+    Subtotal DECIMAL(10,2) NOT NULL CHECK (Subtotal >= 0),
+    PrecioHoraAplicado DECIMAL(10,2) NOT NULL CHECK (PrecioHoraAplicado > 0),
+    idInstalacion INT NOT NULL,
+    idReserva INT NOT NULL,
+    FOREIGN KEY (idInstalacion) REFERENCES INSTALACION(idInstalacion),
+    FOREIGN KEY (idReserva) REFERENCES RESERVA(idReserva)
+);
+
+CREATE TABLE SERVICIO (
+    idServicio INT IDENTITY(1,1) PRIMARY KEY,
+    Nombre VARCHAR(50) NOT NULL,
+    Costo DECIMAL(10,2) NOT NULL CHECK (Costo >= 0),
+    Precio DECIMAL(10,2) NOT NULL CHECK (Precio >= 0),
+    CupoDiario INT CHECK (CupoDiario >= 0),
+    idDisciplina INT NOT NULL,
+    FOREIGN KEY (idDisciplina) REFERENCES DISCIPLINA(idDisciplina)
+);
+
+CREATE TABLE RESERVA_SERVICIO (
+    idReservaServicio INT IDENTITY(1,1) PRIMARY KEY,
+    Cantidad INT NOT NULL CHECK (Cantidad > 0),
+    PrecioAplicado DECIMAL(10,2) NOT NULL CHECK (PrecioAplicado >= 0),
+    Subtotal DECIMAL(10,2) NOT NULL CHECK (Subtotal >= 0),
+    idReserva INT NOT NULL,
+    idServicio INT NOT NULL,
+    FOREIGN KEY (idReserva) REFERENCES RESERVA(idReserva),
+    FOREIGN KEY (idServicio) REFERENCES SERVICIO(idServicio)
+);
+
+CREATE TABLE PAGO (
+    idPago INT IDENTITY(1,1) PRIMARY KEY,
+    FechaPago DATETIME NOT NULL DEFAULT GETDATE(),
+    MedioPago VARCHAR(30) NOT NULL CHECK (MedioPago IN ('Efectivo','Tarjeta','Transferencia')),
+    Importe DECIMAL(10,2) NOT NULL CHECK (Importe > 0),
+    idReserva INT NOT NULL,
+    FOREIGN KEY (idReserva) REFERENCES RESERVA(idReserva)
+);
+
+CREATE TABLE LOG_ALERTAS (
+    idAlerta INT IDENTITY(1,1) PRIMARY KEY,
+    Fecha DATETIME NOT NULL DEFAULT GETDATE(),
+    Tipo VARCHAR(30) NOT NULL CHECK (Tipo IN ('Repetición','Mantenimiento','Error')),
+    Descripcion VARCHAR(255) NOT NULL
+);
+CREATE TABLE LOG_CRITICOS (
+    idAlerta INT IDENTITY(1,1) PRIMARY KEY,
+    Usuario VARCHAR(30) NOT NULL,
+    Fecha DATETIME NOT NULL DEFAULT GETDATE(),
+    Tipo VARCHAR(30) NOT NULL CHECK (Tipo IN ('Acualizacion','Insercion','Eliminacion')),
+    Descripcion VARCHAR(255) NOT NULL
+    );
+GO
+
+
+
+-- ==================================================================================
+-- FUNCIÓN: Margen Servicio
+-- ==================================================================================
+IF OBJECT_ID('fn_MargenServicio','FN') IS NOT NULL DROP FUNCTION fn_MargenServicio;
+GO
+CREATE OR ALTER FUNCTION fn_MargenServicio (@idServicio INT)
+RETURNS DECIMAL(10,2)
+AS
+BEGIN
+    DECLARE @Margen DECIMAL(10,2);
+    SELECT @Margen = (Precio - Costo)
+    FROM SERVICIO
+    WHERE idServicio = @idServicio;
+    RETURN @Margen;
+END;
+GO
+
+-- ==================================================================================
+-- TRIGGERS
+-- ==================================================================================
+IF OBJECT_ID('TR_Reserva_Duplicada','TR') IS NOT NULL DROP TRIGGER TR_Reserva_Duplicada;
+GO
+CREATE OR ALTER TRIGGER TR_Reserva_Duplicada
+ON DetalleReserva
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (
+        SELECT 1
+        FROM DetalleReserva dr
+        INNER JOIN RESERVA r ON dr.idReserva = r.idReserva
+        WHERE EXISTS (
+            SELECT 1
+            FROM inserted i
+            INNER JOIN RESERVA r2 ON i.idReserva = r2.idReserva
+            WHERE dr.idInstalacion = i.idInstalacion
+              AND dr.FechaUso = i.FechaUso
+              AND r.idSocio = r2.idSocio
+              AND dr.idDetalleReserva <> i.idDetalleReserva
+        )
+    )
+    BEGIN
+        INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
+        VALUES ('Repetición', 'Intento de reserva duplicada por mismo socio e instalación en la misma fecha.');
+        ROLLBACK TRANSACTION;
+    END
+END;
+GO
+
+IF OBJECT_ID('TR_Instalacion_Mantenimiento','TR') IS NOT NULL DROP TRIGGER TR_Instalacion_Mantenimiento;
+GO
+CREATE OR ALTER TRIGGER TR_Instalacion_Mantenimiento
+ON INSTALACION
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (
+        SELECT 1
+        FROM inserted i
+        JOIN deleted d ON i.idInstalacion = d.idInstalacion
+        WHERE d.Estado = 'Disponible' AND i.Estado = 'Fuera de Servicio'
+    )
+    BEGIN
+        UPDATE INSTALACION
+        SET Estado = 'Inactiva'
+        WHERE idInstalacion IN (
+            SELECT i.idInstalacion
+            FROM inserted i
+            JOIN deleted d ON i.idInstalacion = d.idInstalacion
+            WHERE d.Estado = 'Disponible' AND i.Estado = 'Fuera de Servicio'
+        );
+        INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
+        VALUES ('Mantenimiento', 'Instalación marcada como Inactiva por mantenimiento.');
+    END
+END;
+GO
+
+IF OBJECT_ID('TR_Reserva_ErrorOperativo','TR') IS NOT NULL DROP TRIGGER TR_Reserva_ErrorOperativo;
+GO
+CREATE OR ALTER TRIGGER TR_Reserva_ErrorOperativo
+ON DetalleReserva
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (
+        SELECT 1
+        FROM inserted i
+        INNER JOIN RESERVA r ON i.idReserva = r.idReserva
+        INNER JOIN SOCIO s ON r.idSocio = s.idSocio
+        INNER JOIN INSTALACION inst ON i.idInstalacion = inst.idInstalacion
+        WHERE s.Estado <> 'Activo' OR inst.Estado <> 'Disponible'
+    )
+    BEGIN
+        INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
+        VALUES ('Error', 'Intento de reserva con socio inactivo o instalación no disponible.');
+        ROLLBACK TRANSACTION;
+    END
+END;
+GO
+
+IF OBJECT_ID('TR_CONTROL_RESERVA','TR') IS NOT NULL DROP TRIGGER TR_CONTROL_RESERVA;
+GO
+CREATE TRIGGER TR_CONTROL_RESERVA
+ON Reserva
+FOR INSERT, UPDATE, DELETE
+AS
+SET NOCOUNT ON;
+
+    IF EXISTS (SELECT 0 FROM inserted)
+        BEGIN
+            IF EXISTS (SELECT 0 FROM deleted)
+                BEGIN
+                    INSERT INTO LOG_CRITICOS VALUES
+                        (SUSER_NAME(),GETDATE(),'Acualizacion', 'Actualizó en la tabla Reserva');
+                END
+                    ELSE
+                        BEGIN
+                            INSERT INTO LOG_CRITICOS VALUES
+                            (SUSER_NAME(),GETDATE(),'Insercion', 'Insertó en la tabla Reserva');
+                        END
+                    END
+                        ELSE
+                            BEGIN
+                                INSERT INTO LOG_CRITICOS VALUES
+                                 (SUSER_NAME(),GETDATE(),'Eliminacion', 'Eliminó en la tabla Reserva');
+        END;
+GO    
+
+IF OBJECT_ID('TR_CONTROL_PAGO','TR') IS NOT NULL DROP TRIGGER TR_CONTROL_PAGO;
+GO
+CREATE TRIGGER TR_CONTROL_PAGO
+ON Pago
+FOR INSERT, UPDATE, DELETE
+AS
+SET NOCOUNT ON;
+
+    IF EXISTS (SELECT 0 FROM inserted)
+        BEGIN
+            IF EXISTS (SELECT 0 FROM deleted)
+                BEGIN
+                    INSERT INTO LOG_CRITICOS VALUES
+                        (SUSER_NAME(),GETDATE(),'Acualizacion', 'Actualizó en la tabla Pago');
+                END
+                    ELSE
+                        BEGIN
+                            INSERT INTO LOG_CRITICOS VALUES
+                            (SUSER_NAME(),GETDATE(),'Insercion', 'Insertó en la tabla Pago');
+                        END
+                    END
+                        ELSE
+                            BEGIN
+                                INSERT INTO LOG_CRITICOS VALUES
+                                 (SUSER_NAME(),GETDATE(),'Eliminacion', 'Eliminó en la tabla Pago');
+        END;
+GO          
+-- ==================================================================================
+-- VISTA
+-- ==================================================================================
+IF OBJECT_ID('vw_ReservasDuplicadas','V') IS NOT NULL DROP VIEW vw_ReservasDuplicadas;
+GO
+CREATE OR ALTER VIEW vw_ReservasDuplicadas AS
+SELECT 
+    s.idSocio,
+    s.Nombre + ' ' + s.Apellido AS Socio,
+    i.idInstalacion,
+    i.Codigo AS Instalacion,
+    dr.FechaUso,
+    COUNT(*) AS CantidadReservas
+FROM 
+    DetalleReserva dr
+    INNER JOIN RESERVA r ON dr.idReserva = r.idReserva
+    INNER JOIN SOCIO s ON r.idSocio = s.idSocio
+    INNER JOIN INSTALACION i ON dr.idInstalacion = i.idInstalacion
+WHERE 
+    r.Estado <> 'Anulada'
+GROUP BY 
+    s.idSocio, s.Nombre, s.Apellido, 
+    i.idInstalacion, i.Codigo, 
+    dr.FechaUso
+HAVING COUNT(*) > 1;
+GO
+
+-- =======================================================================
+--  1. CARGA DE DATOS BASE
+-- =======================================================================
+
+-- Disciplinas
+INSERT INTO DISCIPLINA (Nombre)
+VALUES ('Fútbol'), ('Tenis'), ('Natación');
+
+-- Instalaciones
+INSERT INTO INSTALACION (Codigo, Ubicacion, Tipo, Estado, idDisciplina)
+VALUES
+('FUT01', 'Sector A', 'Cancha 7', 'Disponible', 1),
+('FUT02', 'Sector B', 'Cancha 7', 'Disponible', 1),
+('TEN01', 'Sector C', 'Cancha de Tenis', 'Disponible', 2),
+('NAT01', 'Piscina Central', 'Carril Piscina', 'Disponible', 3);
+
+-- Tarifas (vigentes todo 2025)
+INSERT INTO TARIFA (FechaInicio, FechaFin, PrecioHora, Descripcion, idInstalacion)
+VALUES
+('2025-01-01','2025-12-31', 2500, 'Temporada Fútbol', 1),
+('2025-01-01','2025-12-31', 2200, 'Temporada Fútbol', 2),
+('2025-01-01','2025-12-31', 1800, 'Temporada Tenis', 3),
+('2025-01-01','2025-12-31', 3000, 'Temporada Natación', 4);
+
+-- Socios
+INSERT INTO SOCIO (Nombre, Apellido, Telefono, Email, Documento, Estado)
+VALUES
+('Juan', 'Pérez', '11223344', 'juanp@gmail.com', '40111222', 'Activo'),
+('María', 'García', '22334455', 'mariag@gmail.com', '38999888', 'Activo'),
+('Pedro', 'Sosa', '33445566', 'pedros@gmail.com', '41222333', 'Inactivo');
+
+-- Servicios
+INSERT INTO SERVICIO (Nombre, Costo, Precio, CupoDiario, idDisciplina)
+VALUES
+('Clase grupal de natación', 2000, 3500, 10, 3),
+('Clínica de tenis', 3000, 4800, 15, 2),
+('Alquiler de paleta', 500, 900, 20, 2);
+
+
+INSERT INTO RESERVA (FechaCreacion, Estado, Total, idSocio)
+VALUES (GETDATE(), 'Pendiente', 25000.50, 2);
+
+
+UPDATE RESERVA 
+SET Estado = 'Confirmada'
+WHERE idReserva = 1;
+
+-- obtener el id generado
+-- DECLARE @idReserva INT = SCOPE_IDENTITY();
+
+-- ahora insertar el pago referenciando la reserva creada
+-- INSERT INTO PAGO (MedioPago, Importe, idReserva)
+-- VALUES ('Tarjeta', 25000.50, @idReserva);
+
+-- UPDATE PAGO
+-- SET MedioPago = 'Transferencia',
+    --Importe = 26000.00
+-- WHERE idPago = 1;
+
+-- DELETE FROM PAGO
+-- WHERE idPago = 1;
+ PRINT 'Datos base cargados correctamente';
+GO
+
+
+
+-- ==================================================================================
+-- STORED PROCEDURE
+-- ==================================================================================
+IF OBJECT_ID('SP_RegistrarReserva','SP') IS NOT NULL DROP PROCEDURE sp_RegistrarReserva;
+GO
+CREATE PROCEDURE SP_RegistrarReserva
+    @idSocio INT,
+    @idInstalacion INT,
+    @FechaUso DATE,
+    @Horas INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    BEGIN TRY
+        DECLARE 
+            @EstadoSocio VARCHAR(20),
+            @EstadoInstalacion VARCHAR(20),
+            @PrecioHora DECIMAL(10,2),
+            @idTarifa INT,
+            @Subtotal DECIMAL(10,2),
+            @Total DECIMAL(10,2),
+            @idReserva INT;
+
+        -- Validar socio
+        SELECT @EstadoSocio = Estado FROM SOCIO WHERE idSocio = @idSocio;
+        IF @EstadoSocio IS NULL 
+        BEGIN 
+            THROW 50001, 'El socio no existe.', 1;
+        END;
+        IF @EstadoSocio <> 'Activo' 
+        BEGIN 
+            THROW 50002, 'El socio no está activo.', 1;
+        END;
+
+        -- Validar instalación
+        SELECT @EstadoInstalacion = Estado FROM INSTALACION WHERE idInstalacion = @idInstalacion;
+        IF @EstadoInstalacion IS NULL 
+        BEGIN 
+            THROW 50003, 'La instalación no existe.', 1;
+        END;
+        IF @EstadoInstalacion <> 'Disponible' 
+        BEGIN 
+            THROW 50004, 'La instalación no está disponible.', 1;
+        END;
+
+        -- Obtener tarifa vigente
+        SELECT TOP 1 @idTarifa = idTarifa, @PrecioHora = PrecioHora
+        FROM TARIFA
+        WHERE idInstalacion = @idInstalacion
+          AND @FechaUso BETWEEN FechaInicio AND FechaFin
+        ORDER BY FechaInicio DESC;
+
+        IF @idTarifa IS NULL 
+        BEGIN 
+            THROW 50005, 'No existe una tarifa vigente para la fecha indicada.', 1;
+        END;
+
+        -- Calcular totales
+        SET @Subtotal = @Horas * @PrecioHora;
+        SET @Total = @Subtotal;
+
+        -- Insertar reserva
+        INSERT INTO RESERVA (FechaCreacion, Estado, Total, idSocio)
+        VALUES (GETDATE(), 'Pendiente', @Total, @idSocio);
+
+        SET @idReserva = SCOPE_IDENTITY();
+
+        -- Insertar detalle de reserva
+        INSERT INTO DetalleReserva (FechaUso, Horas, Subtotal, PrecioHoraAplicado, idInstalacion, idReserva)
+        VALUES (@FechaUso, @Horas, @Subtotal, @PrecioHora, @idInstalacion, @idReserva);
+
+        PRINT 'Reserva registrada correctamente.';
+        PRINT CONCAT('   ID Reserva: ', @idReserva);
+        PRINT CONCAT('   Instalación: ', @idInstalacion);
+        PRINT CONCAT('   Precio hora aplicado: $', @PrecioHora);
+        PRINT CONCAT('   Total: $', @Total);
+
+    END TRY
+    BEGIN CATCH
+        DECLARE 
+            @ErrorNumber INT = ERROR_NUMBER(),
+            @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE(),
+            @ErrorSeverity INT = ERROR_SEVERITY(),
+            @ErrorState INT = ERROR_STATE();
+
+        -- Registrar el error en log
+        INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
+        VALUES ('Error', CONCAT('SP_RegistrarReserva: ', @ErrorMessage));
+
+        -- Opcional: re-lanzar el error al cliente
+        THROW @ErrorNumber, @ErrorMessage, @ErrorState;
+    END CATCH
+END;
+GO
+
+-- =======================================================================
+--  2. PRUEBA DE FUNCIÓN fn_MargenServicio
+-- =======================================================================
+SELECT 
+    idServicio, Nombre, 
+    Costo, Precio, 
+    dbo.fn_MargenServicio(idServicio) AS MargenCalculado
+FROM SERVICIO;
+
+PRINT 'Función fn_MargenServicio verificada.';
+GO
+
+-- =======================================================================
+--  3. PRUEBA DEL PROCEDIMIENTO sp_RegistrarReserva
+-- =======================================================================
+
+--  Caso exitoso: socio activo, instalación disponible y tarifa vigente
+EXEC sp_RegistrarReserva 
+    @idSocio = 1,         -- Juan Pérez
+    @idInstalacion = 1,   -- FUT01
+    @FechaUso = '2025-11-10',
+    @Horas = 2;
+
+--  Segundo caso exitoso (otra reserva distinta)
+EXEC sp_RegistrarReserva 
+    @idSocio = 2, 
+    @idInstalacion = 3,   -- TEN01
+    @FechaUso = '2025-11-10',
+    @Horas = 1;
+
+PRINT 'Reservas exitosas registradas.';
+GO
+
+-- =======================================================================
+--  4. TRIGGER: Error operativo (socio inactivo)
+-- =======================================================================
+
+EXEC sp_RegistrarReserva 
+    @idSocio = 3,         -- Pedro (Inactivo)
+    @idInstalacion = 1, 
+    @FechaUso = '2025-11-11',
+    @Horas = 1;
+
+PRINT 'Debe registrarse alerta tipo "Error" en LOG_ALERTAS.';
+GO
+
+-- =======================================================================
+--  5. TRIGGER: Reserva duplicada (mismo socio / instalación / fecha)
+-- =======================================================================
+
+-- Intento duplicar manualmente el detalle de la reserva 1:
+DECLARE @idReserva1 INT = (SELECT TOP 1 idReserva FROM RESERVA WHERE idSocio = 1);
+
+INSERT INTO DetalleReserva (FechaUso, Horas, Subtotal, PrecioHoraAplicado, idInstalacion, idReserva)
+VALUES ('2025-11-10', 2, 5000, 2500, 1, @idReserva1);  -- misma fecha e instalación
+
+PRINT 'Debe dispararse el trigger TR_Reserva_Duplicada y registrar alerta tipo Repetición.';
+GO
+
+-- =======================================================================
+--  6. TRIGGER: Mantenimiento (instalación pasa a Fuera de Servicio)
+-- =======================================================================
+
+UPDATE INSTALACION
+SET Estado = 'Fuera de Servicio'
+WHERE idInstalacion = 2;  -- FUT02
+
+PRINT 'Debe marcarse como Inactiva y registrarse alerta tipo "Mantenimiento".';
+GO
+
+-- =======================================================================
+--  7. CURSOR: mantenimiento automático
+-- =======================================================================
+
+-- Primero, volver una instalación a "Fuera de Servicio" para probar
+UPDATE INSTALACION SET Estado = 'Fuera de Servicio' WHERE idInstalacion = 3;
+
+-- Simular cursor de mantenimiento
+DECLARE @idInstalacion INT;
+DECLARE @codigo VARCHAR(20);
+DECLARE @estadoActual VARCHAR(20);
+
+DECLARE cursor_mantenimiento CURSOR FOR
+    SELECT idInstalacion, Codigo, Estado
+    FROM INSTALACION
+    WHERE Estado = 'Fuera de Servicio';
+
+OPEN cursor_mantenimiento;
+FETCH NEXT FROM cursor_mantenimiento INTO @idInstalacion, @codigo, @estadoActual;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    UPDATE INSTALACION
+    SET Estado = 'Inactiva'
+    WHERE idInstalacion = @idInstalacion;
+
+    INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
+    VALUES ('Mantenimiento', CONCAT('Instalación ', @codigo, ' marcada como INACTIVA por cursor.'));
+
+    FETCH NEXT FROM cursor_mantenimiento INTO @idInstalacion, @codigo, @estadoActual;
+END
+
+CLOSE cursor_mantenimiento;
+DEALLOCATE cursor_mantenimiento;
+
+PRINT 'Cursor ejecutado: instalaciones fuera de servicio fueron inactivadas.';
+GO
+
+-- =======================================================================
+--  8. RESULTADOS DE PRUEBAS
+-- =======================================================================
+
+PRINT '===========================================================';
+PRINT ' RESULTADOS DE PRUEBAS ';
+PRINT '===========================================================';
+
+-- Tablas principales
+SELECT * FROM SOCIO;
+SELECT * FROM INSTALACION;
+SELECT * FROM TARIFA;
+SELECT * FROM RESERVA;
+SELECT * FROM DetalleReserva;
+
+-- Alertas generadas
+SELECT * FROM LOG_ALERTAS;
+SELECT * FROM LOG_CRITICOS;
+
+-- Vista de reservas duplicadas
+SELECT * FROM vw_ReservasDuplicadas;
+GO
+
+PRINT 'PRUEBAS COMPLETADAS EXITOSAMENTE.';
