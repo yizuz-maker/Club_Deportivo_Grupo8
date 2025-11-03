@@ -181,9 +181,9 @@ BEGIN
         )
     )
     BEGIN
+	ROLLBACK TRANSACTION;
         INSERT INTO LOG_ALERTAS (Tipo, Descripcion)
         VALUES ('Repetición', 'Intento de reserva duplicada por mismo socio e instalación en la misma fecha.');
-        ROLLBACK TRANSACTION;
     END
 END;
 GO
